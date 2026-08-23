@@ -4,13 +4,14 @@ __pycache__/
 *.pyd
 env/
 venv/
+.venv/
 .idea/
 .vscode/
+.env
 *.sqlite3
 *.db
 .DS_Store
 *.log
-Dockerfile
 *.tar
 *.zip
 *.egg-info/
