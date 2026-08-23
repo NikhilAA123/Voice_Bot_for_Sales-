@@ -1,72 +1,91 @@
-# AI Voice Sales Agent – Day 1 Foundation
+# AI Voice Sales Agent
 
-A **reliable, low‑latency, production‑ready** backend for an outbound AI sales system. This repository contains the foundation you need to build a voice‑first sales agent that can call prospects, conduct a natural discovery conversation, classify leads, and trigger follow‑up actions.
+A backend for an outbound AI sales system. It calls prospects, holds a natural discovery conversation, works out how serious the buyer is, and triggers follow-up actions such as WhatsApp messages and callbacks while the call is still live.
 
-## 📦 What you get
-| Component | Technology | Why we chose it |
-|-----------|------------|-----------------|
-| API | FastAPI (Python 3.12) | Async‑first, lightweight, easy to test |
-| DB | PostgreSQL 15 (Docker) | Durable storage for calls, leads, callbacks |
-| Containerisation | Docker + Docker‑Compose | Reproducible dev environment |
-| Logging | Loguru (JSON) | Structured logs – simple to filter |
-| Health‑check | `/health` endpoint | Liveness probe for CI/evaluation |
+Built around the ElevateBox SDE intern assignment. The PRD in this repository describes the full 14-day implementation plan this project follows.
 
-## 🛠️ Prerequisites
-- Docker + Docker‑Compose (≥ 2.20)
-- Git (optional, for version control)
+## Stack
 
-## 🚀 Getting started locally
+| Component | Technology | Why |
+|-----------|------------|-----|
+| API | FastAPI (Python 3.12) | Async-first, lightweight, easy to test |
+| Database | PostgreSQL 15 (Docker), SQLite for quick local runs | Durable storage for calls, leads, callbacks |
+| Voice layer | Retell | Managed real-time voice: STT, TTS, streaming, turn detection |
+| LLM | Claude | Structured requirement extraction and lead classification |
+| Telephony and WhatsApp | Twilio | Outbound calling plus WhatsApp follow-ups |
+| Logging | Loguru, JSON output | Structured logs that are easy to filter |
+
+## Getting started locally
+
+Prerequisites: [uv](https://docs.astral.sh/uv/) installed, Docker only if you want PostgreSQL instead of SQLite.
+
 ```bash
-# 1️⃣ Clone (or copy) the repo
-# git clone <repo‑url> ai-voice-sales-agent
-# or work directly in the folder you just created.
+# 1. Create the virtual environment and install dependencies
+uv venv --python 3.12
+uv pip install -r backend/requirements.txt
 
-cd voice-sales-agent
-
-# 2️⃣ Create a real .env from the example and fill in your secrets
+# 2. Create a real .env from the example and fill in your values
 cp .env.example .env
-# edit .env → replace the placeholder values with your actual credentials
 
-# 3️⃣ Build and start the stack
-docker compose up --build -d
-
-# 4️⃣ Verify the service is healthy
-curl http://localhost:8000/health
-# Expected output: {"status":"ok","service":"voice_sales_agent"}
-
-# 5️⃣ When you’re finished, stop everything
-docker compose down
+# 3. Start the API (defaults to SQLite, no database server needed)
+cd backend
+../.venv/Scripts/python.exe -m uvicorn app.main:app --reload   # Windows
 ```
 
-## 📂 Directory layout
+Verify the service is healthy:
+
+```bash
+curl http://localhost:8000/health
+# {"status":"ok","service":"voice_sales_agent"}
+```
+
+### Running with Docker (PostgreSQL)
+
+```bash
+docker compose up --build -d
+docker compose down   # when done
+```
+
+Compose injects its own `DATABASE_URL` pointing at the Postgres container and loads the remaining variables from `.env`, so the same `.env` file serves both modes.
+
+## API
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/health` | Liveness probe, checks DB connectivity |
+| POST | `/webhooks/voice` | Receives transcripts from the voice provider, stores both sides of the conversation, returns the next bot reply |
+
+Request latency is measured by middleware on every call and returned in the `X-Process-Time-Ms` header. Anything over 150 ms is logged as `SLOW`, matching the internal overhead targets in the PRD.
+
+## Project structure
+
 ```
 voice-sales-agent/
 │
-├─ .env.example                 # copy → .env with real secrets
-├─ .gitignore
-├─ docker-compose.yml
+├─ .env.example                 # copy to .env with real secrets
+├─ docker-compose.yml           # Postgres + API
 ├─ README.md
 │
 ├─ backend/
 │   ├─ app/
-│   │   ├─ __init__.py
-│   │   ├─ main.py            # FastAPI entry point, health endpoint
-│   │   ├─ settings.py        # pydantic‑based config
-│   │   ├─ logger.py          # JSON logger
-│   │   └─ db.py              # async SQLAlchemy engine / session factory
+│   │   ├─ main.py             # FastAPI entry point, health, webhook, latency metrics
+│   │   ├─ settings.py         # pydantic-settings configuration
+│   │   ├─ logger.py           # JSON logger
+│   │   ├─ db.py               # async SQLAlchemy engine and session factory
+│   │   ├─ models.py           # ORM schema: leads, calls, requirements, decisions, actions, callbacks
+│   │   ├─ schemas.py          # webhook payloads
+│   │   └─ services/
+│   │       └─ voice.py        # transcript storage and intent extraction placeholder
 │   │
 │   ├─ migrations/
-│   │   └─ 001_init.sql       # initial schema (tables you’ll extend later)
+│   │   └─ 001_init.sql        # Postgres schema, mirrors models.py
 │   │
 │   ├─ requirements.txt
 │   └─ Dockerfile
-│
-└─ README.md
 ```
 
-## 🎯 Next steps (Day 2)
-- Choose a managed real‑time voice platform (e.g., Retell or Vapi) and obtain an API key.
-- Wire the platform’s outbound‑call webhook to a new endpoint (e.g., `POST /voice/webhook`).
-- Verify a real phone call can connect and that the API receives a JSON payload containing the transcript and language information.
+Tables are created automatically at startup from `models.py`. The SQL migration is kept in sync for anyone who prefers applying it manually to Postgres.
 
-All subsequent days will extend this solid foundation with discovery flow, LLM extraction, lead classification, WhatsApp integration, scheduling, and latency measurement.
+## Roadmap
+
+Work follows the PRD's day-by-day plan. Done so far: project foundation, database schema, health check, webhook scaffold with latency measurement. Next: wire the Retell agent, place real outbound calls, replace the placeholder extractor with Claude, add the Hot/Warm/Cold decision engine, mid-call WhatsApp, callback scheduling and the personalized post-call follow-up.
