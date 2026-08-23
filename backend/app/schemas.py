@@ -9,6 +9,7 @@ class VoiceWebhookPayload(BaseModel):
     transcript: str = Field(..., description="Final transcript of the user's utterance")
     language: Optional[str] = Field(None, description="Detected language code (en/hi/te) or mixed")
     is_final: bool = Field(..., description="True when the user has finished speaking for this turn")
+    from_number: Optional[str] = Field(None, description="Caller's phone number when the provider supplies it")
 
 
 class LeadState(BaseModel):

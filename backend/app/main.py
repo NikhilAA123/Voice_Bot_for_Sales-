@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
-from sqlalchemy import text
+from sqlalchemy import select, text
 from .logger import logger
 from .settings import settings
 from .db import engine, Base, get_db
@@ -26,9 +27,10 @@ async def latency_metrics(request: Request, call_next):
     response.headers["X-Process-Time-Ms"] = f"{elapsed_ms:.1f}"
     return response
 
+from .models import Call, Callback, Lead
 from .schemas import VoiceWebhookPayload
-from .services.voice import store_message
-from .services.decision import decide_from_transcript
+from .services.call_flow import handle_call_turn
+from .services.providers import get_voice_provider
 from fastapi import Body
 
 
@@ -53,33 +55,82 @@ async def health_check():
 
 @app.post("/webhooks/voice", response_class=JSONResponse)
 async def voice_webhook(payload: VoiceWebhookPayload = Body(...), db: AsyncSession = Depends(get_db)):
-    """Endpoint that receives a transcript from the managed voice provider.
-    It stores the message, runs a tiny placeholder extraction, and returns the next bot reply.
+    """Receives one transcript turn from the managed voice provider and runs
+    the full pipeline: store -> decide -> act (idempotent) -> reply.
     """
-    # 1️⃣ Store the customer's utterance
-    call_id = await store_message(db, payload.call_sid, "customer", payload.transcript)
+    return await handle_call_turn(db, payload)
 
-    # 2️⃣ If the turn is not final yet, we just acknowledge (no bot reply)
-    if not payload.is_final:
-        return {"reply": ""}
 
-    # 3️⃣ Deterministic decision engine (PRD §9) – keyword layer until Claude lands on Day 4
-    decision = decide_from_transcript(payload.transcript)
-    logger.info(
-        "decision call={} intent={} confidence={} signals={} barrier={}",
-        payload.call_sid, decision.intent, decision.confidence,
-        decision.signals, decision.barrier,
-    )
+# ---------------------------------------------------------------------------
+# Outbound calling – PRD section 13 / assignment requirement #01
+# ---------------------------------------------------------------------------
 
-    # 4️⃣ Response generation based on the decided next action
-    if decision.intent == "HOT":
-        reply = "Great! I’ll send you a WhatsApp with the proposal right now."
-    elif decision.intent == "WARM":
-        reply = "I understand. Let me book a callback at a time that works for you."
-    else:
-        reply = "Thanks for the info. I’ll follow up via email later."
+class OutboundCallRequest(BaseModel):
+    to_number: str = Field(..., description="E.164 number to dial, e.g. +918688664337")
+    from_number: str | None = Field(None, description="Optional caller ID override")
 
-    # 5️⃣ Store the bot reply as well (so the conversation is complete)
-    await store_message(db, payload.call_sid, "bot", reply)
 
-    return {"reply": reply}
+@app.post("/calls/outbound", response_class=JSONResponse)
+async def place_outbound_call(req: OutboundCallRequest, db: AsyncSession = Depends(get_db)):
+    """Trigger the system to dial a prospect on its own. In mock mode (no
+    RETELL_API_KEY) the call is only simulated so the flow stays testable."""
+    provider = get_voice_provider()
+    result = await provider.place_call(req.to_number, req.from_number)
+
+    if result.status == "failed":
+        raise HTTPException(status_code=502, detail=result.raw)
+
+    lead = Lead(phone_number=req.to_number)
+    db.add(lead)
+    await db.flush()
+    call = Call(call_sid=result.provider_call_id, lead_id=lead.id, status="in_progress")
+    db.add(call)
+    await db.commit()
+    await db.refresh(call)
+
+    logger.info("outbound call placed to {} -> sid={} ({})",
+                req.to_number, result.provider_call_id, type(provider).__name__)
+    return {
+        "call_sid": result.provider_call_id,
+        "lead_id": lead.id,
+        "call_id": call.id,
+        "status": result.status,
+        "provider": type(provider).__name__,
+    }
+
+
+@app.get("/calls/{call_sid}", response_class=JSONResponse)
+async def get_call(call_sid: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Call).where(Call.call_sid == call_sid))
+    call = result.scalar_one_or_none()
+    if call is None:
+        raise HTTPException(status_code=404, detail="call not found")
+    return {
+        "call_sid": call.call_sid,
+        "lead_id": call.lead_id,
+        "status": call.status,
+        "started_at": call.started_at.isoformat(),
+        "ended_at": call.ended_at.isoformat() if call.ended_at else None,
+        "language": call.language,
+    }
+
+
+@app.get("/leads/{lead_id}", response_class=JSONResponse)
+async def get_lead(lead_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Lead).where(Lead.id == lead_id))
+    lead = result.scalar_one_or_none()
+    if lead is None:
+        raise HTTPException(status_code=404, detail="lead not found")
+    calls_result = await db.execute(select(Call).where(Call.lead_id == lead.id))
+    callbacks_result = await db.execute(select(Callback).where(Callback.lead_id == lead.id))
+    return {
+        "lead_id": lead.id,
+        "phone_number": lead.phone_number,
+        "status": lead.status,
+        "summary": lead.summary,
+        "calls": [{"call_sid": c.call_sid, "status": c.status} for c in calls_result.scalars()],
+        "callbacks": [
+            {"scheduled_at": cb.scheduled_at.isoformat(), "timezone": cb.timezone, "status": cb.status}
+            for cb in callbacks_result.scalars()
+        ],
+    }

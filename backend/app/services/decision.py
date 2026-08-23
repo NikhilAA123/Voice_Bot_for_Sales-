@@ -77,6 +77,11 @@ _NEEDS_MORE_INFO = [
     r"first (?:let me know|give me) (?:the )?(?:price|cost|details)",
 ]
 
+_CALLBACK_REQUEST = [
+    r"\bcall me back\b", r"\bcallback\b", r"\bcall back\b",
+    r"call kar (?:lijiye|dena|do|dijiye)", r"\bcall karna\b",
+]
+
 _NO_NEED = [
     r"just (?:looking|curious|browsing|exploring|asking)",
     r"\bno need\b",
@@ -165,6 +170,7 @@ def detect_conversation_signals(transcript: str) -> dict:
         "proceed_request": _match_any(text, _PROCEED) is not None,
         "next_step_request": _match_any(text, _NEXT_STEP) is not None,
         "no_need": _match_any(text, _NO_NEED) is not None,
+        "callback_request": _match_any(text, _CALLBACK_REQUEST) is not None,
     }
 
 
@@ -174,6 +180,7 @@ def classify_lead(
     proceed_request: bool = False,
     next_step_request: bool = False,
     no_need_signal: bool = False,
+    callback_request: bool = False,
 ) -> Decision:
     """Pure business rules – PRD sections 9.1/9.2/9.3.
 
@@ -199,6 +206,9 @@ def classify_lead(
         hot_signals.append("requested_next_step_with_context")
     elif next_step_request:
         warm_signals.append("requested_next_step")
+    if callback_request:
+        # Asking for a callback is engagement, even when nothing else was said.
+        warm_signals.append("requested_callback")
 
     # Section 9.2 supporting signals
     if has_budget:
@@ -258,4 +268,5 @@ def decide_from_transcript(transcript: str) -> Decision:
         proceed_request=signals["proceed_request"],
         next_step_request=signals["next_step_request"],
         no_need_signal=signals["no_need"],
+        callback_request=signals["callback_request"],
     )
