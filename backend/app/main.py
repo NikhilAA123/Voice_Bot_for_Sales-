@@ -27,7 +27,8 @@ async def latency_metrics(request: Request, call_next):
     return response
 
 from .schemas import VoiceWebhookPayload
-from .services.voice import store_message, dummy_extract_requirements
+from .services.voice import store_message
+from .services.decision import decide_from_transcript
 from fastapi import Body
 
 
@@ -62,14 +63,18 @@ async def voice_webhook(payload: VoiceWebhookPayload = Body(...), db: AsyncSessi
     if not payload.is_final:
         return {"reply": ""}
 
-    # 3️⃣ Run a dummy extraction (replace with real LLM call later)
-    extraction = await dummy_extract_requirements(payload.transcript)
+    # 3️⃣ Deterministic decision engine (PRD §9) – keyword layer until Claude lands on Day 4
+    decision = decide_from_transcript(payload.transcript)
+    logger.info(
+        "decision call={} intent={} confidence={} signals={} barrier={}",
+        payload.call_sid, decision.intent, decision.confidence,
+        decision.signals, decision.barrier,
+    )
 
-    # 4️⃣ Very simple response generation based on intent
-    intent = extraction.get("intent", "COLD")
-    if intent == "HOT":
+    # 4️⃣ Response generation based on the decided next action
+    if decision.intent == "HOT":
         reply = "Great! I’ll send you a WhatsApp with the proposal right now."
-    elif intent == "WARM":
+    elif decision.intent == "WARM":
         reply = "I understand. Let me book a callback at a time that works for you."
     else:
         reply = "Thanks for the info. I’ll follow up via email later."
