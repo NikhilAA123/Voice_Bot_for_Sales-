@@ -1,20 +1,20 @@
 import os
 from pathlib import Path
-from pydantic import BaseSettings, Field, SecretStr
+from pydantic import Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     LOG_LEVEL: str = Field("info", env="LOG_LEVEL")
-    DATABASE_URL: str = Field(..., env="DATABASE_URL")
+    DATABASE_URL: str = Field("sqlite+aiosqlite:///./voice_sales.db", env="DATABASE_URL")
 
     TWILIO_ACCOUNT_SID: SecretStr = Field(..., env="TWILIO_ACCOUNT_SID")
     TWILIO_AUTH_TOKEN: SecretStr = Field(..., env="TWILIO_AUTH_TOKEN")
     CLAUDE_API_KEY: SecretStr = Field(..., env="CLAUDE_API_KEY")
-    ELEVENLABS_API_KEY: SecretStr = Field(..., env="ELEVENLABS_API_KEY")
+    # Optional – premium TTS voices only; Retell platform voices are 60% cheaper.
+    ELEVENLABS_API_KEY: SecretStr = Field("", env="ELEVENLABS_API_KEY")
     RETELL_API_KEY: SecretStr = Field(..., env="RETELL_API_KEY")
     MY_MOBILE: str = Field(..., env="MY_MOBILE")
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = SettingsConfigDict(env_file=(".env", "../.env"), case_sensitive=True)
 
 settings = Settings()
