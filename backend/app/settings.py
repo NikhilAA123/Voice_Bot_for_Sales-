@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     LOG_LEVEL: str = Field("info", env="LOG_LEVEL")
-    DATABASE_URL: str = Field("sqlite+aiosqlite:///tmp/voice_sales.db", env="DATABASE_URL")
+    DATABASE_URL: str = Field("sqlite+aiosqlite:///app/voice_sales.db", env="DATABASE_URL")
 
     TWILIO_ACCOUNT_SID: SecretStr = Field("", env="TWILIO_ACCOUNT_SID")
     TWILIO_AUTH_TOKEN: SecretStr = Field("", env="TWILIO_AUTH_TOKEN")
