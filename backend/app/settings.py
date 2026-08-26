@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     META_WHATSAPP_TOKEN: SecretStr = Field("", env="META_WHATSAPP_TOKEN")
     META_WHATSAPP_PHONE_NUMBER_ID: str = Field("", env="META_WHATSAPP_PHONE_NUMBER_ID")
     GROQ_API_KEY: SecretStr = Field("", env="GROQ_API_KEY")
-    CLAUDE_API_KEY: SecretStr = Field(..., env="CLAUDE_API_KEY")
+    CLAUDE_API_KEY: SecretStr = Field("", env="CLAUDE_API_KEY")
     # Optional – premium TTS voices only; Retell platform voices are 60% cheaper.
     ELEVENLABS_API_KEY: SecretStr = Field("", env="ELEVENLABS_API_KEY")
     RETELL_API_KEY: SecretStr = Field("", env="RETELL_API_KEY")
