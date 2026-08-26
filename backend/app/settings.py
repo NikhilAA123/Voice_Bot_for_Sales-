@@ -7,8 +7,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field("info", env="LOG_LEVEL")
     DATABASE_URL: str = Field("sqlite+aiosqlite:///./voice_sales.db", env="DATABASE_URL")
 
-    TWILIO_ACCOUNT_SID: SecretStr = Field(..., env="TWILIO_ACCOUNT_SID")
-    TWILIO_AUTH_TOKEN: SecretStr = Field(..., env="TWILIO_AUTH_TOKEN")
+    TWILIO_ACCOUNT_SID: SecretStr = Field("", env="TWILIO_ACCOUNT_SID")
+    TWILIO_AUTH_TOKEN: SecretStr = Field("", env="TWILIO_AUTH_TOKEN")
     # WhatsApp sender: sandbox number while testing, approved number in production.
     TWILIO_WHATSAPP_FROM: str = Field("whatsapp:+14155238886", env="TWILIO_WHATSAPP_FROM")
     # Meta WhatsApp Cloud API (free test tier) – preferred when both are present.
@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     RETELL_API_KEY: SecretStr = Field("", env="RETELL_API_KEY")
     RETELL_AGENT_ID: str = Field("", env="RETELL_AGENT_ID")
     RETELL_FROM_NUMBER: str = Field("", env="RETELL_FROM_NUMBER")
-    MY_MOBILE: str = Field(..., env="MY_MOBILE")
+    MY_MOBILE: str = Field("+919505710419", env="MY_MOBILE")
 
     model_config = SettingsConfigDict(env_file=(".env", "../.env"), case_sensitive=True)
 
