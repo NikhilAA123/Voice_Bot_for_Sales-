@@ -15,6 +15,9 @@ import uuid
 
 import httpx
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 BASE_URL = "http://localhost:8000"
 
 CONVERSATIONS = {
@@ -81,7 +84,7 @@ def run_conversation(client: httpx.Client, name: str, turns: list[str]) -> dict:
 
 def main() -> int:
     try:
-        client = httpx.Client(timeout=10)
+        client = httpx.Client(timeout=30)
         client.get(f"{BASE_URL}/health").raise_for_status()
     except Exception:
         print("Backend not running on :8000 – start uvicorn first.")

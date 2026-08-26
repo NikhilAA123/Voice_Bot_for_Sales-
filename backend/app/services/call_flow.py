@@ -1,7 +1,7 @@
 """Call-flow orchestration – one place that wires every turn:
 
 store the utterance -> decide intent -> persist the decision ->
-fire the permitted side effect (idempotently) -> craft the bot reply.
+fire the permitted side effect (idempotently) -> LLM generates reply.
 
 Mid-call WhatsApp and callback booking never block the conversation:
 providers are awaited but failures only mark the action FAILED, they do
@@ -18,8 +18,9 @@ from ..models import Call, Callback, ConversationMessage, Lead, LeadDecision
 from ..schemas import VoiceWebhookPayload
 from ..settings import settings
 from .actions import build_idem_key, get_or_create_action, mark_status
-from .decision import decide_from_transcript
+from .decision import decide_from_transcript, extract_lead_state
 from .followup import build_midcall_whatsapp
+from .llm import generate_reply
 from .providers import get_whatsapp_sender
 from .timeparse import IST, parse_callback_time
 from .voice import store_message
@@ -124,15 +125,18 @@ async def _book_callback(db: AsyncSession, call: Call, lead: Lead | None, transc
     return callback, True
 
 
-def _reply_for(intent: str, booked: bool, when: datetime | None) -> str:
-    if intent == "HOT":
-        return "Great! I’ll send you a WhatsApp with the proposal right now."
-    if intent == "WARM":
-        if booked and when:
-            friendly = when.strftime("%A at %I:%M %p")
-            return f"No problem – I’ll call you back {friendly}. Talk to you then!"
-        return "I understand. Let me know a good time and I’ll book a callback for you."
-    return "Thanks for the info. I’ll follow up via email later."
+async def _build_conversation_history(db: AsyncSession, call_id: int) -> list[dict]:
+    """Load conversation messages as OpenAI-format dicts for the LLM."""
+    result = await db.execute(
+        select(ConversationMessage)
+        .where(ConversationMessage.call_id == call_id)
+        .order_by(ConversationMessage.id)
+    )
+    messages = []
+    for msg in result.scalars():
+        role = "assistant" if msg.speaker == "bot" else "user"
+        messages.append({"role": role, "content": msg.content})
+    return messages
 
 
 async def _customer_transcript(db: AsyncSession, call: Call) -> str:
@@ -148,7 +152,7 @@ async def _customer_transcript(db: AsyncSession, call: Call) -> str:
 
 async def handle_call_turn(db: AsyncSession, payload: VoiceWebhookPayload) -> dict:
     """Process one webhook turn end-to-end. Never raises on provider errors."""
-    # 1️⃣ Store the customer's utterance
+    # 1. Store the customer's utterance
     call_id = await store_message(db, payload.call_sid, "customer", payload.transcript)
 
     # Not final yet: acknowledge, no decisions on partial speech.
@@ -156,12 +160,12 @@ async def handle_call_turn(db: AsyncSession, payload: VoiceWebhookPayload) -> di
         return {"reply": "", "intent": None}
 
     call = await _get_call(db, payload.call_sid)
-    if call is None:                                # defensive: should not happen
+    if call is None:
         return {"reply": "", "intent": None, "error": "call not found"}
 
     lead = await _ensure_lead(db, call, payload.from_number)
 
-    # 2️⃣ Decide on the FULL conversation so far (deterministic engine until Claude lands)
+    # 2. Decide on the FULL conversation so far
     full_transcript = await _customer_transcript(db, call)
     decision = decide_from_transcript(full_transcript)
     logger.info(
@@ -171,7 +175,7 @@ async def handle_call_turn(db: AsyncSession, payload: VoiceWebhookPayload) -> di
     )
     await _persist_decision(db, call, decision, full_transcript)
 
-    # 3️⃣ Act while still on the call
+    # 3. Act while still on the call
     whatsapp_result = None
     callback_booked, when = False, None
     if decision.intent == "HOT":
@@ -180,10 +184,37 @@ async def handle_call_turn(db: AsyncSession, payload: VoiceWebhookPayload) -> di
         callback, booked = await _book_callback(db, call, lead, payload.transcript)
         callback_booked, when = booked, callback.scheduled_at if callback else None
 
-    # 4️⃣ Craft the spoken reply
-    reply = _reply_for(decision.intent, callback_booked, when)
+    # 4. Generate reply via LLM (or fallback for critical actions)
+    history = await _build_conversation_history(db, call.id)
 
-    # 5️⃣ Mirror the bot turn into the transcript
+    # For HOT/WARM/COLD action moments, add a hint to the LLM
+    action_hint = ""
+    if decision.intent == "HOT":
+        action_hint = " [ACTION: You have just triggered sending a WhatsApp proposal. Confirm this naturally.]"
+    elif decision.intent == "WARM" and callback_booked and when:
+        action_hint = f" [ACTION: Callback booked for {when.strftime('%A at %I:%M %p')}. Confirm this naturally.]"
+    elif decision.intent == "WARM" and not callback_booked:
+        action_hint = " [ACTION: Ask the customer when they would like a callback.]"
+    elif decision.intent == "COLD":
+        action_hint = " [ACTION: Thank them gracefully and end the call.]"
+
+    customer_turn = payload.transcript + action_hint
+
+    reply = await generate_reply(history, decision.state, customer_turn)
+
+    # LLM fallback: if Groq fails, use a minimal safe reply
+    if not reply:
+        if decision.intent == "HOT":
+            reply = "Great, I'll send you the details on WhatsApp right now."
+        elif decision.intent == "WARM":
+            if callback_booked and when:
+                reply = f"Sure, I'll call you back {when.strftime('%A at %I:%M %p')}. Talk to you then!"
+            else:
+                reply = "No problem. When would be a good time for me to call you back?"
+        else:
+            reply = "Thanks for your time. Have a great day!"
+
+    # 5. Mirror the bot turn into the transcript
     await store_message(db, payload.call_sid, "bot", reply)
 
     return {
