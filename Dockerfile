@@ -9,9 +9,11 @@ RUN useradd -m appuser
 WORKDIR /app
 
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir aiosqlite
 
 COPY backend/app ./app
+
+RUN mkdir -p /app/data && chown -R appuser:appuser /app
 
 USER appuser
 
