@@ -14,7 +14,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # ---- Copy source ----
 COPY app ./app
-COPY migrations ./migrations
 
 # ---- Run as non‑root ----
 USER appuser
